@@ -1,18 +1,17 @@
 import asyncio
 import time
-from config import CHUNK_SIZE, QUEUE_SIZE, logger, last_update_time, status_message, UPDATE_INTERVAL
-from utils import human_readable_size, time_formatter
 import math
+import config
+from utils import human_readable_size, time_formatter
 
 async def progress_callback(current, total, start_time, file_name, status_msg):
     """Update progress with reduced frequency"""
-    global last_update_time
     now = time.time()
     
     # Update every UPDATE_INTERVAL seconds
-    if now - last_update_time < UPDATE_INTERVAL: 
+    if now - config.last_update_time < config.UPDATE_INTERVAL: 
         return 
-    last_update_time = now
+    config.last_update_time = now
     
     percentage = current * 100 / total if total > 0 else 0
     time_diff = now - start_time
@@ -47,14 +46,14 @@ class ExtremeBufferedStream:
         self.current_bytes = 0
         
         # EXTREME SETTINGS
-        self.chunk_size = CHUNK_SIZE
-        self.queue = asyncio.Queue(maxsize=QUEUE_SIZE)  # 160MB buffer
+        self.chunk_size = config.CHUNK_SIZE
+        self.queue = asyncio.Queue(maxsize=config.QUEUE_SIZE)  # 160MB buffer
         
         self.downloader_task = asyncio.create_task(self._worker())
         self.buffer = b""
         self.closed = False
         
-        logger.info(f"🚀 EXTREME Stream: 32MB chunks, 160MB buffer for {file_name}")
+        config.logger.info(f"🚀 EXTREME Stream: 32MB chunks, 160MB buffer for {file_name}")
 
     async def _worker(self):
         """Background worker to download chunks"""
@@ -69,7 +68,7 @@ class ExtremeBufferedStream:
                 await self.queue.put(chunk)
             await self.queue.put(None) 
         except Exception as e:
-            logger.error(f"⚠️ Stream Worker Error: {e}")
+            config.logger.error(f"⚠️ Stream Worker Error: {e}")
             await self.queue.put(None)
 
     def __len__(self):
@@ -87,7 +86,7 @@ class ExtremeBufferedStream:
             chunk = await self.queue.get()
             if chunk is None: 
                 if self.current_bytes < self.file_size:
-                    logger.warning(f"⚠️ Incomplete: {self.current_bytes}/{self.file_size}")
+                    config.logger.warning(f"⚠️ Incomplete: {self.current_bytes}/{self.file_size}")
                 self.closed = True
                 break
             self.buffer += chunk
