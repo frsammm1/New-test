@@ -11,16 +11,14 @@ from telethon.sessions import StringSession
 from telethon.network import connection
 from aiohttp import web
 
-from config import (
-    API_ID, API_HASH, STRING_SESSION, BOT_TOKEN, PORT, logger
-)
+import config
 from handlers import register_handlers
 
 # --- EXTREME CLIENT SETUP ---
 user_client = TelegramClient(
-    StringSession(STRING_SESSION), 
-    API_ID, 
-    API_HASH,
+    StringSession(config.STRING_SESSION), 
+    config.API_ID, 
+    config.API_HASH,
     connection=connection.ConnectionTcpFull,
     use_ipv6=False,
     connection_retries=None,
@@ -31,8 +29,8 @@ user_client = TelegramClient(
 
 bot_client = TelegramClient(
     'bot_session', 
-    API_ID, 
-    API_HASH,
+    config.API_ID, 
+    config.API_HASH,
     connection=connection.ConnectionTcpFull,
     use_ipv6=False,
     connection_retries=None,
@@ -52,27 +50,27 @@ async def start_web_server():
     app.router.add_get('/', handle)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    site = web.TCPSite(runner, '0.0.0.0', config.PORT)
     await site.start()
-    logger.info(f"⚡ EXTREME MODE Web Server - Port {PORT}")
+    config.logger.info(f"⚡ EXTREME MODE Web Server - Port {config.PORT}")
 
 # --- MAIN ---
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     
-    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    logger.info("🚀 EXTREME MODE BOT v2.0 Starting...")
-    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    logger.info("⚡ Config: 32MB chunks × 5 queue = 160MB buffer")
-    logger.info("📝 Features: File manipulation enabled")
-    logger.info("🔥 Maximum speed + Smart controls")
-    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    logger.info("⚠️  WARNING: High RAM usage - Monitor closely!")
-    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    config.logger.info("🚀 EXTREME MODE BOT v2.0 Starting...")
+    config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    config.logger.info("⚡ Config: 32MB chunks × 5 queue = 160MB buffer")
+    config.logger.info("📝 Features: File manipulation enabled")
+    config.logger.info("🔥 Maximum speed + Smart controls")
+    config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    config.logger.info("⚠️  WARNING: High RAM usage - Monitor closely!")
+    config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     
     # Start clients
     user_client.start()
-    bot_client.start(bot_token=BOT_TOKEN)
+    bot_client.start(bot_token=config.BOT_TOKEN)
     
     # Register all handlers
     register_handlers(user_client, bot_client)
@@ -80,10 +78,10 @@ if __name__ == '__main__':
     # Start web server
     loop.create_task(start_web_server())
     
-    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    logger.info("✅ EXTREME MODE Active!")
-    logger.info("🔥 Bot is ready for transfers!")
-    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    config.logger.info("✅ EXTREME MODE Active!")
+    config.logger.info("🔥 Bot is ready for transfers!")
+    config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     
     # Run bot
     bot_client.run_until_disconnected()
