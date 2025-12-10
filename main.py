@@ -8,6 +8,7 @@ Complete File Manipulation System
 import asyncio
 try:
     import uvloop
+    # We set the policy here, but we will apply it effectively when using asyncio.run
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 except ImportError:
     pass
@@ -18,31 +19,6 @@ from aiohttp import web
 
 import config
 from handlers import register_handlers
-
-# --- EXTREME CLIENT SETUP ---
-user_client = TelegramClient(
-    StringSession(config.STRING_SESSION), 
-    config.API_ID, 
-    config.API_HASH,
-    connection=connection.ConnectionTcpFull,
-    use_ipv6=False,
-    connection_retries=None,
-    flood_sleep_threshold=120,
-    request_retries=20,
-    auto_reconnect=True
-)
-
-bot_client = TelegramClient(
-    'bot_session', 
-    config.API_ID, 
-    config.API_HASH,
-    connection=connection.ConnectionTcpFull,
-    use_ipv6=False,
-    connection_retries=None,
-    flood_sleep_threshold=120,
-    request_retries=20,
-    auto_reconnect=True
-)
 
 # --- WEB SERVER ---
 async def handle(request):
@@ -60,9 +36,7 @@ async def start_web_server():
     config.logger.info(f"⚡ EXTREME MODE Web Server - Port {config.PORT}")
 
 # --- MAIN ---
-if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    
+async def main():
     config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     config.logger.info("🚀 EXTREME MODE BOT v2.0 Starting...")
     config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -72,16 +46,43 @@ if __name__ == '__main__':
     config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     config.logger.info("⚠️  WARNING: High RAM usage - Monitor closely!")
     config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    # --- EXTREME CLIENT SETUP ---
+    # Initialize clients inside the event loop
+    user_client = TelegramClient(
+        StringSession(config.STRING_SESSION),
+        config.API_ID,
+        config.API_HASH,
+        connection=connection.ConnectionTcpFull,
+        use_ipv6=False,
+        connection_retries=None,
+        flood_sleep_threshold=120,
+        request_retries=20,
+        auto_reconnect=True
+    )
+
+    bot_client = TelegramClient(
+        'bot_session',
+        config.API_ID,
+        config.API_HASH,
+        connection=connection.ConnectionTcpFull,
+        use_ipv6=False,
+        connection_retries=None,
+        flood_sleep_threshold=120,
+        request_retries=20,
+        auto_reconnect=True
+    )
     
     # Start clients
-    user_client.start()
-    bot_client.start(bot_token=config.BOT_TOKEN)
+    await user_client.start()
+    await bot_client.start(bot_token=config.BOT_TOKEN)
     
     # Register all handlers
     register_handlers(user_client, bot_client)
     
     # Start web server
-    loop.create_task(start_web_server())
+    # We create a task for the web server so it runs in the background
+    asyncio.create_task(start_web_server())
     
     config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     config.logger.info("✅ EXTREME MODE Active!")
@@ -89,4 +90,10 @@ if __name__ == '__main__':
     config.logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     
     # Run bot
-    bot_client.run_until_disconnected()
+    await bot_client.run_until_disconnected()
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
