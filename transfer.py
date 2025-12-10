@@ -235,9 +235,9 @@ async def transfer_process(event, user_client, bot_client, source_id, dest_id, s
             
             total_processed += 1
             
-            # Memory management: Small pause every 3 files
-            if total_processed % 3 == 0:
-                await asyncio.sleep(1)
+            # Memory management: Small pause every 3 files - REMOVED for speed
+            # if total_processed % 3 == 0:
+            #    await asyncio.sleep(1)
 
         # Final summary
         if config.is_running or config.stop_flag:

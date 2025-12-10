@@ -6,6 +6,11 @@ Complete File Manipulation System
 """
 
 import asyncio
+try:
+    import uvloop
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+except ImportError:
+    pass
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.network import connection

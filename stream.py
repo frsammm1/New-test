@@ -34,8 +34,8 @@ async def progress_callback(current, total, start_time, file_name, status_msg):
 
 class ExtremeBufferedStream:
     """
-    Optimized streaming with 8MB chunks and 2-queue buffer (16MB total)
-    Perfect for Render free tier (512MB RAM)
+    Optimized streaming with 1MB chunks and 80-queue buffer (80MB total)
+    Perfect for Render free tier (512MB RAM) - Smoother streaming
     """
     def __init__(self, client, location, file_size, file_name, start_time, status_msg):
         self.client = client
@@ -48,7 +48,7 @@ class ExtremeBufferedStream:
         
         # Optimized settings for free tier
         self.chunk_size = config.CHUNK_SIZE
-        self.queue = asyncio.Queue(maxsize=config.QUEUE_SIZE)  # 16MB buffer
+        self.queue = asyncio.Queue(maxsize=config.QUEUE_SIZE)  # 80MB buffer
         
         self.downloader_task = None
         self.buffer = b""
