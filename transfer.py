@@ -1,6 +1,7 @@
 import asyncio
 import time
 import os
+import math
 from telethon import errors
 from telethon.tl.types import (
     DocumentAttributeFilename, 
@@ -13,8 +14,11 @@ from utils import (
     get_target_info, apply_filename_manipulations,
     apply_caption_manipulations, sanitize_filename
 )
-from stream import ExtremeBufferedStream
+from stream import ExtremeBufferedStream, SplitFile
 from keyboards import get_progress_keyboard
+
+# Constants
+SPLIT_THRESHOLD = 1.9 * 1024 * 1024 * 1024 # 1.9 GB safely
 
 async def transfer_process(event, user_client, bot_client, source_id, dest_id, start_msg, end_msg, session_id):
     """Main transfer process with all features - FIXED VERSION"""
@@ -34,33 +38,49 @@ async def transfer_process(event, user_client, bot_client, source_id, dest_id, s
     total_success = 0
     total_size = 0
     total_skipped = 0
+    deleted_msgs = 0
     overall_start = time.time()
     
     try:
-        messages = []
+        # Step 1: Detect all existing messages to find deleted ones
+        await status_message.edit("🔍 **Scanning messages...**")
+        all_ids = set(range(start_msg, end_msg + 1))
+        found_messages = []
+
+        # We fetch messages in batches to ensure we find everything that exists
+        # iter_messages skips deleted ones, so we just collect what we find
         async for message in user_client.iter_messages(
             source_id, 
             min_id=start_msg-1, 
-            max_id=end_msg+1, 
+            max_id=end_msg+1,
             reverse=True
         ):
-            messages.append(message)
+            found_messages.append(message)
+
+        found_ids = set(m.id for m in found_messages)
+        missing_ids = sorted(list(all_ids - found_ids))
+        deleted_msgs = len(missing_ids)
         
-        config.logger.info(f"📋 Total messages to process: {len(messages)}")
+        if deleted_msgs > 0:
+            config.logger.info(f"🗑️ Detected {deleted_msgs} deleted/missing messages: {missing_ids}")
         
-        for idx, message in enumerate(messages, 1):
+        config.logger.info(f"📋 Total messages to process: {len(found_messages)}")
+
+        for idx, message in enumerate(found_messages, 1):
             # Check stop flag
             if config.stop_flag or not config.is_running:
                 await status_message.edit(
                     "🛑 **Transfer Stopped!**\n"
                     f"✅ Success: {total_success}\n"
                     f"⏭️ Skipped: {total_skipped}\n"
+                    f"🗑️ Deleted: {deleted_msgs}\n"
                     f"📊 Total: {total_processed}"
                 )
                 break
 
-            # Skip service messages
+            # Skip service messages silently (as requested)
             if getattr(message, 'action', None): 
+                # config.logger.debug(f"Skipping service message {message.id}")
                 continue
 
             stream_file = None
@@ -85,12 +105,13 @@ async def transfer_process(event, user_client, bot_client, source_id, dest_id, s
                 # Apply manipulations
                 file_name = apply_filename_manipulations(file_name, settings)
                 file_name = sanitize_filename(file_name)
+                file_size = message.file.size
 
                 await status_message.edit(
                     f"⬇️ **Downloading...**\n"
                     f"📂 `{file_name[:35]}...`\n"
-                    f"📊 File {idx}/{len(messages)}\n"
-                    f"✅ Success: {total_success} | ⏭️ Skip: {total_skipped}",
+                    f"📊 File {idx}/{len(found_messages)}\n"
+                    f"✅ Success: {total_success} | 🗑️ Del: {deleted_msgs}",
                     buttons=get_progress_keyboard()
                 )
 
@@ -123,11 +144,11 @@ async def transfer_process(event, user_client, bot_client, source_id, dest_id, s
                             if hasattr(message.media, 'document') 
                             else message.media.photo)
                 
-                # CREATE STREAM
+                # CREATE MAIN STREAM
                 stream_file = ExtremeBufferedStream(
                     user_client, 
                     media_obj,
-                    message.file.size,
+                    file_size,
                     file_name,
                     start_time,
                     status_message
@@ -136,52 +157,108 @@ async def transfer_process(event, user_client, bot_client, source_id, dest_id, s
                 # Apply caption manipulations
                 modified_caption = apply_caption_manipulations(message.text, settings)
                 
-                # Update status before upload
-                await status_message.edit(
-                    f"⬆️ **Uploading...**\n"
-                    f"📂 `{file_name[:35]}...`\n"
-                    f"📊 File {idx}/{len(messages)}\n"
-                    f"✅ Success: {total_success} | ⏭️ Skip: {total_skipped}",
-                    buttons=get_progress_keyboard()
-                )
-                
-                # UPLOAD WITH RETRY LOGIC
-                retry_count = 0
-                uploaded = False
-                
-                while retry_count < config.MAX_RETRIES and not uploaded:
-                    try:
-                        await bot_client.send_file(
-                            dest_id,
-                            file=stream_file,
-                            caption=modified_caption,
-                            attributes=attributes,
-                            thumb=thumb,
-                            supports_streaming=True,
-                            file_size=message.file.size,
-                            force_document=not is_video_mode,
-                            part_size_kb=config.UPLOAD_PART_SIZE
-                        )
-                        uploaded = True
+                # SPLIT LOGIC
+                if file_size > SPLIT_THRESHOLD:
+                    parts = math.ceil(file_size / SPLIT_THRESHOLD)
+                    config.logger.info(f"✂️ Splitting {file_name} into {parts} parts")
+
+                    for i in range(parts):
+                        part_num = i + 1
+                        part_name = f"{file_name}.part{part_num:03d}"
+                        part_caption = f"{modified_caption}\n\n(Part {part_num}/{parts})"
+
+                        # Calculate part size
+                        remaining = file_size - (i * SPLIT_THRESHOLD)
+                        part_size = min(remaining, SPLIT_THRESHOLD)
+
+                        # Create wrapper for this part
+                        split_stream = SplitFile(stream_file, int(part_size))
                         
-                    except errors.FloodWaitError as e:
-                        config.logger.warning(f"⏳ FloodWait {e.seconds}s")
                         await status_message.edit(
-                            f"⏳ **Cooling Down...**\n"
-                            f"Waiting: `{e.seconds}s`\n"
-                            f"Then resuming...",
+                            f"⬆️ **Uploading Part {part_num}/{parts}...**\n"
+                            f"📂 `{part_name[:35]}...`\n"
+                            f"📊 File {idx}/{len(found_messages)}",
                             buttons=get_progress_keyboard()
                         )
-                        await asyncio.sleep(e.seconds)
-                        retry_count += 1
                         
-                    except Exception as e:
-                        config.logger.error(f"Upload error: {e}")
-                        retry_count += 1
-                        if retry_count < config.MAX_RETRIES:
-                            await asyncio.sleep(2)
-                        else:
-                            raise
+                        # Update filename attribute for this part
+                        part_attributes = [DocumentAttributeFilename(file_name=part_name)]
+
+                        # Retry logic for part
+                        retry_count = 0
+                        uploaded = False
+                        while retry_count < config.MAX_RETRIES and not uploaded:
+                            try:
+                                await bot_client.send_file(
+                                    dest_id,
+                                    file=split_stream,
+                                    caption=part_caption,
+                                    attributes=part_attributes,
+                                    thumb=thumb if i == 0 else None, # Only first part gets thumb
+                                    supports_streaming=True,
+                                    file_size=part_size,
+                                    force_document=True, # Parts are always docs
+                                    part_size_kb=config.UPLOAD_PART_SIZE
+                                )
+                                uploaded = True
+                            except errors.FloodWaitError as e:
+                                config.logger.warning(f"⏳ FloodWait {e.seconds}s")
+                                await asyncio.sleep(e.seconds)
+                                retry_count += 1
+                            except Exception as e:
+                                config.logger.error(f"Part upload error: {e}")
+                                await asyncio.sleep(2)
+                                retry_count += 1
+
+                        if not uploaded:
+                            raise Exception(f"Failed to upload part {part_num}")
+
+                else:
+                    # NORMAL UPLOAD
+                    await status_message.edit(
+                        f"⬆️ **Uploading...**\n"
+                        f"📂 `{file_name[:35]}...`\n"
+                        f"📊 File {idx}/{len(found_messages)}\n"
+                        f"✅ Success: {total_success} | 🗑️ Del: {deleted_msgs}",
+                        buttons=get_progress_keyboard()
+                    )
+
+                    retry_count = 0
+                    uploaded = False
+
+                    while retry_count < config.MAX_RETRIES and not uploaded:
+                        try:
+                            await bot_client.send_file(
+                                dest_id,
+                                file=stream_file,
+                                caption=modified_caption,
+                                attributes=attributes,
+                                thumb=thumb,
+                                supports_streaming=True,
+                                file_size=file_size,
+                                force_document=not is_video_mode,
+                                part_size_kb=config.UPLOAD_PART_SIZE
+                            )
+                            uploaded = True
+
+                        except errors.FloodWaitError as e:
+                            config.logger.warning(f"⏳ FloodWait {e.seconds}s")
+                            await status_message.edit(
+                                f"⏳ **Cooling Down...**\n"
+                                f"Waiting: `{e.seconds}s`\n"
+                                f"Then resuming...",
+                                buttons=get_progress_keyboard()
+                            )
+                            await asyncio.sleep(e.seconds)
+                            retry_count += 1
+
+                        except Exception as e:
+                            config.logger.error(f"Upload error: {e}")
+                            retry_count += 1
+                            if retry_count < config.MAX_RETRIES:
+                                await asyncio.sleep(2)
+                            else:
+                                raise
                 
                 # Cleanup thumbnail
                 if thumb and os.path.exists(thumb): 
@@ -191,15 +268,15 @@ async def transfer_process(event, user_client, bot_client, source_id, dest_id, s
                         pass
                 
                 elapsed = time.time() - start_time
-                speed = message.file.size / elapsed / (1024*1024) if elapsed > 0 else 0
-                total_size += message.file.size
+                speed = file_size / elapsed / (1024*1024) if elapsed > 0 else 0
+                total_size += file_size
                 total_success += 1
                 
                 await status_message.edit(
                     f"✅ **Sent:** `{file_name[:30]}...`\n"
                     f"⚡ {speed:.1f} MB/s in {elapsed:.1f}s\n"
-                    f"📊 Progress: {idx}/{len(messages)}\n"
-                    f"✅ Success: {total_success} | ⏭️ Skip: {total_skipped}",
+                    f"📊 Progress: {idx}/{len(found_messages)}\n"
+                    f"✅ Success: {total_success} | 🗑️ Del: {deleted_msgs}",
                     buttons=get_progress_keyboard()
                 )
 
@@ -215,12 +292,13 @@ async def transfer_process(event, user_client, bot_client, source_id, dest_id, s
                 await asyncio.sleep(2)
             
             except Exception as e:
-                config.logger.error(f"❌ Error on msg {message.id}: {e}")
+                # "No failure" means we log and continue
+                config.logger.error(f"❌ Error on msg {message.id}: {e}", exc_info=True)
                 total_skipped += 1
                 await status_message.edit(
                     f"❌ **Failed - Skipping**\n"
                     f"Error: `{str(e)[:30]}...`\n"
-                    f"Progress: {idx}/{len(messages)}",
+                    f"Progress: {idx}/{len(found_messages)}",
                     buttons=get_progress_keyboard()
                 )
                 await asyncio.sleep(1)
@@ -235,24 +313,26 @@ async def transfer_process(event, user_client, bot_client, source_id, dest_id, s
             
             total_processed += 1
             
-            # Memory management: Small pause every 3 files - REMOVED for speed
-            # if total_processed % 3 == 0:
-            #    await asyncio.sleep(1)
-
         # Final summary
         if config.is_running or config.stop_flag:
             overall_time = time.time() - overall_start
             avg_speed = total_size / overall_time / (1024*1024) if overall_time > 0 else 0
             
-            await status_message.edit(
+            summary = (
                 f"🏁 **Transfer Complete!**\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"✅ Success: `{total_success}`\n"
+                f"🗑️ Deleted/Missing: `{deleted_msgs}`\n"
                 f"⏭️ Skipped: `{total_skipped}`\n"
                 f"📦 Total Size: `{human_readable_size(total_size)}`\n"
                 f"⚡ Avg Speed: `{avg_speed:.1f} MB/s`\n"
                 f"⏱️ Time: `{time_formatter(overall_time)}`"
             )
+
+            if deleted_msgs > 0:
+                summary += f"\n\n⚠️ **Note:** {deleted_msgs} messages were deleted/missing in source."
+
+            await status_message.edit(summary)
 
     except Exception as e:
         await status_message.edit(f"💥 **Critical Error:**\n`{str(e)[:100]}`")

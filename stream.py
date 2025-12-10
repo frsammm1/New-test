@@ -32,6 +32,39 @@ async def progress_callback(current, total, start_time, file_name, status_msg):
     except Exception as e:
         config.logger.debug(f"Progress update failed: {e}")
 
+class SplitFile:
+    """Wrapper to split a large stream into virtual parts"""
+    def __init__(self, stream, max_size):
+        self.stream = stream
+        self.max_size = max_size
+        self.current_pos = 0
+        self.closed = False
+
+    def __len__(self):
+        return self.max_size
+
+    async def read(self, size=-1):
+        if self.closed:
+            return b""
+
+        remaining = self.max_size - self.current_pos
+        if remaining <= 0:
+            return b""
+
+        if size == -1 or size > remaining:
+            size = remaining
+
+        chunk = await self.stream.read(size)
+        if not chunk:
+            return b""
+
+        self.current_pos += len(chunk)
+        return chunk
+
+    async def close(self):
+        self.closed = True
+        # Note: We do NOT close the parent stream here
+
 class ExtremeBufferedStream:
     """
     Optimized streaming with 1MB chunks and 80-queue buffer (80MB total)
