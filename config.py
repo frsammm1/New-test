@@ -9,9 +9,9 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 PORT = int(os.environ.get("PORT", 8080))
 
 # --- OPTIMIZED SETTINGS FOR RENDER FREE TIER ---
-# Reduced from 32MB to 8MB chunks (better for 512MB RAM limit)
-CHUNK_SIZE = 8 * 1024 * 1024  # 8MB chunks
-QUEUE_SIZE = 10  # 80MB buffer (8MB × 2) - Much safer for free tier
+# Reduced from 8MB to 1MB chunks (better for smoothness/speed on free tier)
+CHUNK_SIZE = 1024 * 1024  # 1MB chunks
+QUEUE_SIZE = 80  # 80MB buffer (1MB × 80) - Much safer for free tier
 UPLOAD_PART_SIZE = 8192  # 8MB upload parts (was 32MB)
 UPDATE_INTERVAL = 5  # Progress update interval (seconds)
 MAX_RETRIES = 3  # Retry attempts per file (reduced from 4)
